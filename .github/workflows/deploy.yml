@@ -87,27 +87,87 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
+
+            # Use sudo if not root
+            if [ "$(id -u)" -eq 0 ]; then
+              SUDO=""
+            else
+              SUDO="sudo"
+            fi
+
+            echo "::group::Check Docker"
+
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "Docker not found. Installing Docker..."
+
+              if command -v apt-get >/dev/null 2>&1; then
+                $SUDO apt-get update
+                $SUDO apt-get install -y ca-certificates curl gnupg
+
+                curl -fsSL https://get.docker.com | $SUDO sh
+
+              elif command -v yum >/dev/null 2>&1; then
+                $SUDO yum install -y yum-utils curl
+                curl -fsSL https://get.docker.com | $SUDO sh
+
+              elif command -v dnf >/dev/null 2>&1; then
+                $SUDO dnf install -y dnf-plugins-core curl
+                curl -fsSL https://get.docker.com | $SUDO sh
+
+              else
+                echo "Unsupported Linux distribution. Please install Docker manually."
+                exit 1
+              fi
+
+              $SUDO systemctl enable docker
+              $SUDO systemctl start docker
+            else
+              echo "Docker already installed."
+            fi
+
+            if ! $SUDO docker compose version >/dev/null 2>&1; then
+              echo "Docker Compose plugin not found. Installing..."
+
+              if command -v apt-get >/dev/null 2>&1; then
+                $SUDO apt-get update
+                $SUDO apt-get install -y docker-compose-plugin
+              elif command -v yum >/dev/null 2>&1; then
+                $SUDO yum install -y docker-compose-plugin
+              elif command -v dnf >/dev/null 2>&1; then
+                $SUDO dnf install -y docker-compose-plugin
+              else
+                echo "Unsupported Linux distribution. Please install Docker Compose plugin manually."
+                exit 1
+              fi
+            fi
+
+            $SUDO docker --version
+            $SUDO docker compose version
+
+            echo "::endgroup::"
+
             cd /opt/mom
 
             echo "::group::Pull image"
-            docker compose pull mom
+            $SUDO docker compose pull mom
             echo "::endgroup::"
 
             echo "::group::Up"
-            docker compose up -d
+            $SUDO docker compose up -d
             sleep 4
-            docker compose ps
+            $SUDO docker compose ps
             echo "::endgroup::"
 
             echo "::group::Health check"
-            if [ "$(docker inspect --format='{{.State.Running}}' mom 2>/dev/null)" != "true" ]; then
+            if [ "$($SUDO docker inspect --format='{{.State.Running}}' mom 2>/dev/null)" != "true" ]; then
               echo "mom container not running, recent logs:"
-              docker logs --tail 100 mom 2>&1 || true
+              $SUDO docker logs --tail 100 mom 2>&1 || true
               exit 1
             fi
             echo "mom is running"
             echo "::endgroup::"
 
-            echo "::group::Prune old images (keep last 3)"
-            docker image prune -f --filter "until=168h" || true
+            echo "::group::Prune old images"
+            $SUDO docker image prune -f --filter "until=168h" || true
             echo "::endgroup::"
+            
